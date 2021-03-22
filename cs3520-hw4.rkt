@@ -1,5 +1,5 @@
 #lang plait
-
+;;不寫了啦，this language is too weak!!! don't even have basic pattern matching!
 (define-type-alias Location Number)
 
 (define-type Value
@@ -7,7 +7,9 @@
   (closV [arg : Symbol]
          [body : Exp]
          [env : Env])
-  (boxV [l : Location]))
+  (boxV [l : Location])
+  (recordV [ns : (Listof Symbol)]
+           [args : (Listof Location)]))
 
 (define-type Exp
   (numE [n : Number])
@@ -27,7 +29,14 @@
   (unboxE [arg : Exp])
   (setboxE [bx : Exp]
            [val : Exp])
-  (beginE [args : (Listof Exp)]))
+  (beginE [args : (Listof Exp)])
+  (recordE [ns : (Listof Symbol)]
+           [args : (Listof Exp)]) ;;record is just like list of boxes(?)
+  (getE [rec : Exp]
+        [n : Symbol])
+  (setE [rec : Exp]
+        [n : Symbol]
+        [val : Exp]))
 
 (define-type Binding
   (bind [name : Symbol]
@@ -195,8 +204,22 @@
                  (override-store (cell l v-val)
                                  sto-val))]
            [else (error 'interp "not a box")])))]
-    [(beginE args) (interp-begin-args args env sto)]))
-     
+    [(beginE args) (interp-begin-args args env sto)]
+    [(recordE ns args) (foldl (lambda (a b) (let ([symbol (fst a)]
+                                                  [e (snd a)])
+                                              
+                                ;(define-values (symbol e) a)  ;; a(symbol, expr tuple) -> b (recordv env sto tuple)-> b
+                                (type-case (Value * Env * Storage) b
+                                  [((recordV args locations) env sto)
+                                   (with [(v-e sto-e) (interp e env sto)]
+                                         (values (recordV (append locations (new-loc sto-e)) (append args v-e))))]
+                                  [else (error 'record "should be record")])))
+                              (values (recordV empty emtpy) env sto) (map2 (lambda (a b) (values a b)) ns args))] ;; wait doesn't racket have a foldleft function? yes indeed!
+    [(getE rec n) (with [(v-rec sto-rec) (interp rec env sto)]
+                        (v*s (find n v-rec) sto-rec))]
+    [(setE rec n val) (also-do-something)]))
+
+
 
 (module+ test
   (test (interp (parse `2) mt-env mt-store)

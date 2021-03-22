@@ -1,4 +1,4 @@
-#lang plai-typed
+#lang plait
 
 (define-type ExprC
   [numC (n : number)]
@@ -18,7 +18,7 @@
 
 (define (subst [to-replace : symbol] [with : ExprC] [in-this : ExprC])
   (type-case ExprC in-this
-    [numC (n) in-this]
+    [(numC n) in-this]
     [plusC (l r) (plusC (subst to-replace with l) (subst to-replace with r))]
     [multC (l r) (multC (subst to-replace with l) (subst to-replace with r))]
     [idC (s) (cond [(equal? s to-replace) with]
