@@ -4,7 +4,8 @@
   (numV [n : Number])
   (closV [arg : Symbol]
          [body : Exp]
-         [env : Env]))
+         [env : Env])
+  (pairV [l : Thunk] [r : Thunk]))
 
 (define-type Thunk
   (delay [body : Exp]
@@ -14,14 +15,22 @@
 (define-type Exp
   (numE [n : Number])
   (idE [s : Symbol])
-  (plusE [l : Exp] 
+  (plusE [l : Exp]
          [r : Exp])
   (multE [l : Exp]
          [r : Exp])
   (lamE [n : Symbol]
         [body : Exp])
   (appE [fun : Exp]
-        [arg : Exp]))
+        [arg : Exp])
+  (if0E [tst : Exp]
+        [thn : Exp]
+        [els : Exp])
+  (pairE [l : Exp]
+         [r : Exp])
+  (fstE [p : Exp])
+  (sndE [p : Exp]))
+
 
 (define-type Binding
   (bind [name : Symbol]
@@ -46,6 +55,17 @@
     [(s-exp-match? `{* ANY ANY} s)
      (multE (parse (second (s-exp->list s)))
             (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{pair ANY ANY} s)
+     (pairE (parse (second (s-exp->list s)))
+            (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{if0 ANY ANY ANY} s)
+     (if0E (parse (second (s-exp->list s)))
+           (parse (third (s-exp->list s)))
+           (parse (fourth (s-exp->list s))))]
+    [(s-exp-match? `{fst ANY} s)
+     (fstE (parse (second (s-exp->list s))))]
+    [(s-exp-match? `{snd ANY} s)
+     (sndE (parse (second (s-exp->list s))))]
     [(s-exp-match? `{let {[SYMBOL ANY]} ANY} s)
      (let ([bs (s-exp->list (first
                              (s-exp->list (second
@@ -54,7 +74,7 @@
                    (parse (third (s-exp->list s))))
              (parse (second bs))))]
     [(s-exp-match? `{lambda {SYMBOL} ANY} s)
-     (lamE (s-exp->symbol (first (s-exp->list 
+     (lamE (s-exp->symbol (first (s-exp->list
                                   (second (s-exp->list s)))))
            (parse (third (s-exp->list s))))]
     [(s-exp-match? `{ANY ANY} s)
@@ -101,14 +121,29 @@
                                      (extend-env
                                       (bind n (delay arg env (box (none))))
                                       c-env))]
-                      [else (error 'interp "not a function")])]))
+                      [else (error 'interp "not a function")])]
+    [(if0E test thn els) (let ([v (interp test env)]
+                               [delay-then (delay thn env (box (none)))]
+                               [delay-else (delay els env (box (none)))])
+                           (force (if (zero? (numV-n v)) delay-then delay-else)))]
+    [(pairE l r) (pairV (delay l env (box (none))) (delay r env (box (none))))]
+    [(fstE p) (type-case Value (interp p env)
+                [(pairV l r) (force l)]
+                [else (error 'fst "not a pair")])]
+    [(sndE p) (type-case Value (interp p env)
+               [(pairV l r) (force r)]
+               [else (error 'snd "not a pair")])]))
+
+
+
+
 
 (module+ test
   (test (interp (parse `2) mt-env)
         (numV 2))
   (test/exn (interp (parse `x) mt-env)
             "free variable")
-  (test (interp (parse `x) 
+  (test (interp (parse `x)
                 (extend-env (bind 'x (delay (numE 9) mt-env (box (none)))) mt-env))
         (numV 9))
   (test (interp (parse `{+ 2 1}) mt-env)
@@ -189,7 +224,171 @@
                                   mt-env)
                       (box (none))))
         (numV 9)))
+(define (interp-expr [eee : Exp])
+  (type-case Value (interp eee mt-env)
+    [(numV n) (number->s-exp n)]
+    [(pairV l r) `pair]
+    [else (error 'interp-expr "shouldn't get here")]))
+(module+ test
+  (test (interp-expr (parse `10))
+        `10)
+  (test (interp-expr (parse `{+ 10 17}))
+        `27)
+  (test (interp-expr (parse `{* 10 7}))
+        `70)
+  (test (interp-expr (parse `{{lambda {x} {+ x 12}}
+                              {+ 1 17}}))
+        `30)
 
+  (test (interp-expr (parse `{let {[x 0]}
+                               {let {[f {lambda {y} {+ x y}}]}
+                                 {+ {f 1}
+                                    {let {[x 3]}
+                                      {f 2}}}}}))
+        `3)
+
+  (test (interp-expr (parse `{if0 0 1 2}))
+        `1)
+  (test (interp-expr (parse `{if0 1 1 2}))
+        `2)
+
+  (test (interp-expr (parse `{pair 1 2}))
+        `pair)
+  (test (interp-expr (parse `{fst {pair 1 2}}))
+        `1)
+  (test (interp-expr (parse `{snd {pair 1 2}}))
+        `2)
+  (test (interp-expr (parse `{let {[p {pair 1 2}]}
+                               {+ {fst p} {snd p}}}))
+        `3)
+  (test (interp-expr (parse `{let {[f {lambda {x}
+                                        {pair x x}}]}
+                               {+ {fst {f 3}} {snd {f 4}}}}))
+        `7)
+(test (interp-expr (parse `{{lambda {x} 0}
+                              {+ 1 {lambda {y} y}}}))
+        `0)
+  (test (interp-expr (parse `{let {[x {+ 1 {lambda {y} y}}]}
+                               0}))
+        `0)
+  (test (interp-expr (parse `{fst {pair 3
+                                        {+ 1 {lambda {y} y}}}}))
+        `3)
+  (test (interp-expr (parse `{snd {pair {+ 1 {lambda {y} y}}
+                                        4}}))
+        `4)
+  (test (interp-expr (parse `{fst {pair 5
+                                        ;; Infinite loop:
+                                        {{lambda {x} {x x}}
+                                         {lambda {x} {x x}}}}}))
+        `5)
+
+  (test (interp-expr
+         (parse
+          `{let {[mkrec
+                  ;; This is call-by-name mkrec
+                  ;;  (simpler than call-by-value):
+                  {lambda {body-proc}
+                    {let {[fX {lambda {fX}
+                                {body-proc {fX fX}}}]}
+                      {fX fX}}}]}
+              {let {[fib
+                     {mkrec
+                      {lambda {fib}
+                        ;; Fib:
+                        {lambda {n}
+                          {if0 n
+                               1
+                               {if0 {+ n -1}
+                                    1
+                                    {+ {fib {+ n -1}}
+                                       {fib {+ n -2}}}}}}}}]}
+                ;; Call fib on 4:
+                {fib 4}}}))
+        `5)
+
+  (test (interp-expr
+         (parse
+          `{let {[mkrec
+                  ;; This is call-by-name mkrec
+                  ;;  (simpler than call-by-value):
+                  {lambda {body-proc}
+                    {let {[fX {lambda {fX}
+                                {body-proc {fX fX}}}]}
+                      {fX fX}}}]}
+             {let {[nats-from
+                    {mkrec
+                     {lambda {nats-from}
+                       ;; nats-from:
+                       {lambda {n}
+                         {pair n {nats-from {+ n 1}}}}}}]}
+               {let {[list-ref
+                      {mkrec
+                       {lambda {list-ref}
+                         ;; list-ref:
+                         {lambda {n}
+                           {lambda {l}
+                             {if0 n
+                                  {fst l}
+                                  {{list-ref {+ n -1}} {snd l}}}}}}}]}
+                 ;; Call list-ref on infinite list:
+                 {{list-ref 4} {nats-from 2}}}}}))
+        `6)
+  (test (interp-expr
+         (parse
+          `{let {[mkrec
+                  {lambda {body-proc}
+                    {let {[fX {lambda {fX}
+                                {body-proc {fX fX}}}]}
+                      {fX fX}}}]}
+             {let {[nats-to
+                    {mkrec
+                     {lambda {nats-to}
+                       {lambda {n}
+                         {if0 n
+                              {pair 0 0}
+                              {let {[l {nats-to {+ n -1}}]}
+                                {pair {+ {fst l} 1}
+                                      l}}}}}}]}
+               {let {[sum
+                      {mkrec
+                       {lambda {sum}
+                         {lambda {n}
+                           {lambda {l}
+                             {if0 n
+                                  0
+                                  {+ {fst l}
+                                     {{sum {+ n -1}} {snd l}}}}}}}}]}
+                 {{sum 10000} {nats-to 10000}}}}}))
+        `50005000)
+
+  (test (interp-expr
+         (parse
+          `{let {[mkrec
+                  {lambda {body-proc}
+                    {let {[fX {lambda {fX}
+                                {body-proc {fX fX}}}]}
+                      {fX fX}}}]}
+             {let {[nats-to
+                    {mkrec
+                     {lambda {nats-to}
+                       {lambda {n}
+                         {if0 n
+                              {pair 0 0}
+                              {let {[l {nats-to {+ n -1}}]}
+                                {pair l
+                                      {+ {snd l} 1}}}}}}}]}
+               {let {[sum
+                      {mkrec
+                       {lambda {sum}
+                         {lambda {n}
+                           {lambda {l}
+                             {if0 n
+                                  0
+                                  {+ {snd l}
+                                     {{sum {+ n -1}} {fst l}}}}}}}}]}
+                 {{sum 10000} {nats-to 10000}}}}}))
+        `50005000))
 ;; num+ and num* ----------------------------------------
 (define (num-op [op : (Number Number -> Number)] [l : Value] [r : Value]) : Value
   (cond
