@@ -111,7 +111,14 @@
      (continue k (closV n body env))]
     [(appE fun arg) (interp fun env
                             (appArgK arg env k))]))
-
+;; 我來用lambda（函數調用啦）解釋一下continuation到底是個什麼東西。
+;; 首先呢，我們一次只處理一個東西，在這裡就是先interp fun，然後我們還剩下參數沒動啊，那他就是一個續體, with continuation (appArgK ...)
+;; 這個續體就叫appArgK，我們再給他一些參數（其中的這個K，就是比較高層的函數的續體，我們調用完函數之後就會返回去計算）讓他構成一個Cont
+;; 解釋lamE的時候我們會有continue K (closure ...)這裡把他想做繼續我們該算的東西，因為lamE已經解釋完了剩下的就是這個continuation
+;; 那麼我們continue 這個東西，進來continue這個函數
+;; 首先得解釋函數參數，那麼arg這個續體就算完了，還有一個continuation是函數調用
+;; 所以又有doAppK (do apply K吧)
+;; doAppK解釋之後就是繼續解釋別的東西了，（指next-k，與appE裡面的k相同）
 (define (continue [k : Cont] [v : Value]) : Value
   (type-case Cont k
     [(doneK) v]
