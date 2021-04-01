@@ -14,12 +14,20 @@
          [r : Exp])
   (multE [l : Exp]
          [r : Exp])
-  (lamE [ns : (Listof Symbol)]
+  (lamE [ns : (Listof Symbol)] ;; can accept zero argument (ie. () -> Exp)
         [body : Exp])
   (appE [fun : Exp]
         [args : (Listof Exp)])
   (let/ccE [n : Symbol]
-           [body : Exp]))
+           [body : Exp])
+  (negE [n : Exp])
+  (avgE [un : Exp]
+       [deux : Exp]
+       [trois : Exp]) ;; implement them without relying on the interpreter's existing implementation of addition and multiplication
+                      ;; (e.g., don't generate an doPlusK continuation in the process of interpreting negation or averaging).
+  (if0E [p : Exp]
+        [thn : Exp]
+        [els : Exp]))
 
 (define-type Binding
   (bind [name : Symbol]
@@ -119,12 +127,18 @@
     [(lamE ns body)
      (continue k (closV ns body env))]
     [(appE fun args) (interp fun env
-                             (appArgK (first args) env k))]
+                             (appArgK (first args) env k))] ;;?? this is not finished
     [(let/ccE n body)
      (interp body
              (extend-env (bind n (contV k))
                          env)
-             k)]))
+             k)]
+    [(negE n) (type-case Value (interp n env k)
+                [(numV x) (numV (- 0 x))]
+                [else (error 'negE "negation applied to non-number")])]
+    [(avgE un deux trois) (use continuation)]
+    [(if0E p t e) (we could use continuation)]))
+  
 
 (define (continue [k : Cont] [v : Value]) : Value
   (type-case Cont k
