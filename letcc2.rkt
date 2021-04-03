@@ -10,7 +10,7 @@
 (define-type Exp
   (numE [n : Number])
   (idE [s : Symbol])
-  (plusE [l : Exp] 
+  (plusE [l : Exp]
          [r : Exp])
   (multE [l : Exp]
          [r : Exp])
@@ -55,7 +55,22 @@
            [env : Env]
            [k : Cont])
   (doAppK [f : Value]
-          [k : Cont]))
+          [k : Cont])
+  (negateK [k : Cont])
+  (calculate2K [deux : Exp]
+               [trois : Exp]
+               [env : Env]
+               [k : Cont])
+  (decideif0K [thn : Exp]
+               [els : Exp]
+               [env : Env]
+               [k : Cont])
+  (troisK [n1 : Value]
+          [trois : Exp]
+          [env : Env]
+          [k : Cont])
+  (addup/3 [number12 : Value]
+           [k : Cont]))
 
 (module+ test
   (print-only-errors #t))
@@ -79,12 +94,23 @@
                    (parse (third (s-exp->list s))))
              (list (parse (second bs)))))]
     [(s-exp-match? `{lambda {SYMBOL} ANY} s)
-     (lamE (map s-exp->symbol (s-exp->list 
+     (lamE (map s-exp->symbol (s-exp->list
                                (second (s-exp->list s))))
            (parse (third (s-exp->list s))))]
     [(s-exp-match? `{let/cc SYMBOL ANY} s)
      (let/ccE (s-exp->symbol (second (s-exp->list s)))
               (parse (third (s-exp->list s))))]
+    [(s-exp-match? `{neg ANY} s)
+     (negE (parse (second (s-exp->list s))))]
+    [(s-exp-match? `{avg ANY ANY ANY} s)
+     (avgE (parse (second (s-exp->list s)))
+           (parse (third (s-exp->list s)))
+           (parse (fourth (s-exp->list s))))]
+    [(s-exp-match? `{if0 ANY ANY ANY} s)
+     (if0E (parse (second (s-exp->list s)))
+           (parse (third (s-exp->list s)))
+           (parse (fourth (s-exp->list s))))]
+     
     [(s-exp-match? `{ANY ANY} s)
      (appE (parse (first (s-exp->list s)))
            (map parse (rest (s-exp->list s))))]
@@ -133,12 +159,18 @@
              (extend-env (bind n (contV k))
                          env)
              k)]
-    [(negE n) (type-case Value (interp n env k)
-                [(numV x) (numV (- 0 x))]
-                [else (error 'negE "negation applied to non-number")])]
-    [(avgE un deux trois) (use continuation)]
-    [(if0E p t e) (we could use continuation)]))
-  
+    ;; it isn't CPS if we just call continue and interp in the same place(
+    [(negE n) (interp n env (negateK k))]
+
+     ;(continue k (type-case Value (interp n env (doneK))
+                            ;; is this a hack? no, this isn't CPS
+     ;                       [(numV x) (numV (- 0 x))]
+     ;                       [else (error 'negE "negation applied to non-number")]))]
+    [(avgE un deux trois) (interp un env
+                                  (calculate2K deux trois env k))]  ;; we need to process the three numbers in order. so what do we do?
+    [(if0E p t e) (interp p env
+                          (decideif0K t e env k))]))
+
 
 (define (continue [k : Cont] [v : Value]) : Value
   (type-case Cont k
@@ -165,7 +197,25 @@
                  c-env)
                 next-k)]
        [(contV k-v) (continue k-v v)]
-       [else (error 'interp "not a function")])]))
+       [else (error 'interp "not a function")])]
+    [(negateK next-k) (continue next-k (num- (numV 0) v))]
+    [(calculate2K deux trois env next-k)
+     (interp deux env
+             (troisK v trois env next-k))]
+    [(troisK n1 trois env next-k) ;; v is n2
+     (interp trois env
+             (addup/3 (num+ n1 v) next-k))]
+    [(addup/3 n12 next-k)
+     (continue next-k (num/ (num+ n12 v) (numV 3)))]
+    [(decideif0K thn els env next-k)
+     (if (eq? 0 (numV-n v))
+         (interp thn env next-k)
+         (interp els env next-k))]))
+
+(define (interp-expr [eee : Exp])
+  (type-case Value (interp eee mt-env (doneK))
+    [(numV n) (number->s-exp n)]
+    [else (error 'interp-expr "shouldn't get here")]))
 
 (module+ test
   (test (interp (parse `2) mt-env (doneK))
@@ -247,7 +297,25 @@
   (test (continue (appArgK (numE 5) mt-env (doneK)) (closV (list 'x) (idE 'x) mt-env))
         (numV 5))
   (test (continue (doAppK (closV (list 'x) (idE 'x) mt-env) (doneK)) (numV 8))
-        (numV 8)))
+        (numV 8))
+  ;; The use of let/cc in the examples above just help check
+  ;; that you’re not breaking the rules of continuation-passing style. (sorry 'bout breaking the rules)
+  (test (interp-expr (parse `{neg 2}))
+        `-2)
+  (test (interp-expr (parse `{avg 0 6 6}))
+        `4)
+  (test (interp-expr (parse `{let/cc k {neg {k 3}}}))
+        `3)
+  (test (interp-expr (parse `{let/cc k {avg 0 {k 3} 0}}))
+        `3)
+  (test (interp-expr (parse `{let/cc k {avg {k 2} {k 3} 0}}))
+        `2)
+  (test (interp-expr (parse `{if0 1 2 3}))
+        `3)
+  (test (interp-expr (parse `{if0 0 2 3}))
+        `2)
+  (test (interp-expr (parse `{let/cc k {if0 {k 9} 2 3}}))
+        `9))
 
 ;; num+ and num* ----------------------------------------
 (define (num-op [op : (Number Number -> Number)] [l : Value] [r : Value]) : Value
@@ -258,8 +326,12 @@
      (error 'interp "not a number")]))
 (define (num+ [l : Value] [r : Value]) : Value
   (num-op + l r))
+(define (num- [l : Value] [r : Value]) : Value
+  (num-op - l r))
 (define (num* [l : Value] [r : Value]) : Value
   (num-op * l r))
+(define (num/ [l : Value] [r : Value]) : Value
+  (num-op / l r))
 
 (module+ test
   (test (num+ (numV 1) (numV 2))
